@@ -18,6 +18,19 @@ from apscheduler.schedulers.background import BackgroundScheduler
 # ============================================================
 
 DB_PATH = Path(__file__).resolve().parent.parent / "compliance_sentinel.db"
+logger = logging.getLogger("compliance_sentinel")
+
+
+@asynccontextmanager
+async def lifespan(app):
+    from backend.scheduler import start_scheduler, stop_scheduler
+
+    start_scheduler()
+
+    try:
+        yield
+    finally:
+        stop_scheduler()
 
 app = FastAPI(
     title="Compliance Sentinel API",
