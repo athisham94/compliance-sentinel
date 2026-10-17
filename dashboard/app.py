@@ -956,9 +956,7 @@ elif page == "Findings":
                                 result, error = api_post(
                                     f"/findings/{finding_id}/resolve",
                                     {
-                                        "resolution_note": (
-                                            resolution_note.strip()
-                                        )
+                                        "note": resolution_note.strip()
                                     },
                                 )
 
