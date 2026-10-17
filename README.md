@@ -1,17 +1,22 @@
 # Compliance Sentinel
-Continuous compliance drift detection MVP.
 
-## What this prototype does
-- Accepts synthetic HR termination and account-status events.
-- Evaluates access-revocation controls against a configurable deadline.
-- Stores events and findings in SQLite.
-- Exposes a FastAPI backend and a Streamlit dashboard.
-- Includes a simulator for a demo scenario.
+Continuous compliance drift detection and monitoring MVP.
 
-This is a prototype using synthetic data. It is not a certified ISO 27001 compliance tool and does not connect to real SAP, AWS, or GitHub systems.
+## Features
+
+- AC-01: Access revocation after employee termination.
+- AC-02: Privileged account ownership checks.
+- CM-01: Critical cloud change review checks.
+- Finding management and supporting evidence.
+- Scheduled compliance evaluation.
+- Persistent monitoring run history.
+- Audit trail and Streamlit dashboard.
+- Synthetic demo scenario.
 
 ## Setup
-Use Python 3.11+.
+
+Requires Python 3.11 or newer.
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate
@@ -19,24 +24,39 @@ pip install -r requirements.txt
 ```
 
 ## Run the API
-Terminal 1:
+
 ```bash
 uvicorn backend.main:app --reload
 ```
-API docs: http://127.0.0.1:8000/docs
+
+API documentation: http://127.0.0.1:8000/docs
 
 ## Run the dashboard
-Terminal 2:
+
 ```bash
 streamlit run dashboard/app.py
 ```
 
-## Load demo events
-Terminal 3:
+## Run the demo
+
+With the API running:
+
 ```bash
 python simulator/demo_scenario.py
 ```
-Refresh the dashboard to see the detected drift.
 
-## IBM Z / LinuxONE plan
-The MVP runs locally first. It is designed to be containerizable and can be deployed to LinuxONE if an environment is available. Actual LinuxONE deployment and live mainframe integrations are planned, not implemented in this prototype.
+## Monitoring
+
+The background scheduler periodically evaluates compliance controls. Configure the interval with `COMPLIANCE_MONITOR_INTERVAL_SECONDS`.
+
+Monitoring endpoints: `/monitoring/status` and `/monitoring/runs?limit=10`.
+
+## Tests
+
+```bash
+PYTHONPATH=. python -m pytest tests/ -v
+```
+
+## Limitations
+
+This prototype uses synthetic data. Live enterprise integrations and IBM LinuxONE deployment have not been implemented or demonstrated.
