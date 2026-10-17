@@ -714,7 +714,7 @@ elif page == "Findings":
         selected_statuses = st.multiselect(
             "Filter by status",
             options=all_statuses,
-            default=all_statuses,
+            default=["OPEN"] if "OPEN" in all_statuses else all_statuses,
         )
 
     with filter_col2:
