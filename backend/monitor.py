@@ -25,7 +25,7 @@ def utc_now():
     return datetime.now(timezone.utc)
 
 
-def run_compliance_monitor():
+def _run_compliance_monitor():
     """
     Run one monitoring cycle.
 
@@ -288,3 +288,93 @@ def run_compliance_monitor():
     )
 
     return results
+
+
+def run_compliance_monitor():
+    """
+    Execute one monitoring cycle and persist its outcome.
+
+    A cycle with control-level errors is recorded as PARTIAL.
+    An unexpected exception is recorded as FAILED and then re-raised.
+    """
+
+    started_at = utc_now().isoformat()
+
+    with connect() as con:
+        cursor = con.execute(
+            """
+            INSERT INTO monitoring_runs (
+                started_at, status, errors, summary
+            )
+            VALUES (?, 'RUNNING', '[]', '{}')
+            """,
+            (started_at,),
+        )
+        run_id = cursor.lastrowid
+
+    try:
+        results = _run_compliance_monitor()
+
+        errors = results.get("errors", [])
+        status = "PARTIAL" if errors else "SUCCESS"
+        completed_at = utc_now().isoformat()
+
+        summary = {
+            "ac01_evaluated": results.get("ac01_evaluated", 0),
+            "ac02_evaluated": results.get("ac02_evaluated", 0),
+            "cm01_evaluated": results.get("cm01_evaluated", 0),
+        }
+
+        with connect() as con:
+            con.execute(
+                """
+                UPDATE monitoring_runs
+                SET completed_at = ?,
+                    status = ?,
+                    ac01_evaluated = ?,
+                    ac02_evaluated = ?,
+                    cm01_evaluated = ?,
+                    error_count = ?,
+                    errors = ?,
+                    summary = ?
+                WHERE id = ?
+                """,
+                (
+                    completed_at,
+                    status,
+                    summary["ac01_evaluated"],
+                    summary["ac02_evaluated"],
+                    summary["cm01_evaluated"],
+                    len(errors),
+                    json.dumps(errors),
+                    json.dumps(summary),
+                    run_id,
+                ),
+            )
+
+        logger.info(
+            "Monitoring run %s finished with status %s",
+            run_id,
+            status,
+        )
+        return {**results, "run_id": run_id, "status": status}
+
+    except Exception as exc:
+        completed_at = utc_now().isoformat()
+        errors = [{"error": str(exc)}]
+
+        with connect() as con:
+            con.execute(
+                """
+                UPDATE monitoring_runs
+                SET completed_at = ?,
+                    status = 'FAILED',
+                    error_count = 1,
+                    errors = ?
+                WHERE id = ?
+                """,
+                (completed_at, json.dumps(errors), run_id),
+            )
+
+        logger.exception("Monitoring run %s failed", run_id)
+        raise

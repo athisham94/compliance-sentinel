@@ -7,10 +7,8 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 import logging
-import os
 
 from contextlib import asynccontextmanager
-from apscheduler.schedulers.background import BackgroundScheduler
 
 
 # ============================================================
@@ -25,6 +23,7 @@ logger = logging.getLogger("compliance_sentinel")
 async def lifespan(app):
     from backend.scheduler import start_scheduler, stop_scheduler
 
+    init_db()
     start_scheduler()
 
     try:
@@ -32,10 +31,12 @@ async def lifespan(app):
     finally:
         stop_scheduler()
 
+
 app = FastAPI(
     title="Compliance Sentinel API",
     version="1.0.0",
     description="Continuous compliance drift detection and remediation tracking.",
+    lifespan=lifespan,
 )
 
 
@@ -103,6 +104,19 @@ def init_db():
             details TEXT NOT NULL,
             created_at TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS monitoring_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            started_at TEXT NOT NULL,
+            completed_at TEXT,
+            status TEXT NOT NULL,
+            ac01_evaluated INTEGER NOT NULL DEFAULT 0,
+            ac02_evaluated INTEGER NOT NULL DEFAULT 0,
+            cm01_evaluated INTEGER NOT NULL DEFAULT 0,
+            error_count INTEGER NOT NULL DEFAULT 0,
+            errors TEXT NOT NULL DEFAULT '[]',
+            summary TEXT NOT NULL DEFAULT '{}'
+        );
         """)
 
         # Migrate older findings tables without deleting existing records.
@@ -169,170 +183,6 @@ def init_db():
 
 init_db()
 
-
-
-# ============================================================
-# CONTINUOUS COMPLIANCE MONITORING
-# ============================================================
-
-logger = logging.getLogger("compliance_sentinel.monitor")
-
-MONITOR_INTERVAL_SECONDS = int(
-    os.getenv("COMPLIANCE_MONITOR_INTERVAL_SECONDS", "60")
-)
-
-
-def run_compliance_monitor():
-    """
-    Reevaluate stored events periodically.
-
-    Uses the existing detection functions so findings continue
-    to use the same database schema and lifecycle logic.
-    """
-    try:
-        with connect() as con:
-            employee_rows = con.execute("""
-                SELECT DISTINCT employee_id
-                FROM events
-                WHERE event_type IN (
-                    'employee_terminated',
-                    'account_status'
-                )
-                  AND employee_id IS NOT NULL
-            """).fetchall()
-
-            privileged_rows = con.execute("""
-                SELECT id, employee_id, system_name, event_time, payload
-                FROM events
-                WHERE event_type = 'privileged_account'
-                ORDER BY id
-            """).fetchall()
-
-            change_rows = con.execute("""
-                SELECT id, employee_id, system_name, event_time, payload
-                FROM events
-                WHERE event_type = 'cloud_change'
-                ORDER BY id
-            """).fetchall()
-
-        # AC-01: Check employees whose accounts may remain active.
-        for row in employee_rows:
-            employee_id = row["employee_id"]
-
-            try:
-                evaluate_employee(employee_id)
-            except Exception:
-                logger.exception(
-                    "AC-01 evaluation failed for employee %s",
-                    employee_id,
-                )
-
-        # AC-02: Reevaluate the latest privileged-account state
-        # for each employee/system combination.
-        latest_privileged = {}
-
-        for row in privileged_rows:
-            key = (row["employee_id"], row["system_name"])
-            latest_privileged[key] = row
-
-        for row in latest_privileged.values():
-            try:
-                payload = json.loads(row["payload"])
-
-                if payload.get("privileged") is True:
-                    if not payload.get("owner"):
-                        # Reuse the existing evaluator by creating
-                        # an EventIn instance from the stored event.
-                        event = EventIn(
-                            event_type="privileged_account",
-                            employee_id=row["employee_id"] or "UNKNOWN",
-                            system_name=row["system_name"],
-                            event_time=parse_dt(row["event_time"]),
-                            privileged=True,
-                            owner=payload.get("owner"),
-                            details=payload,
-                        )
-
-                        evaluate_privileged_account(event, row["id"])
-
-            except Exception:
-                logger.exception(
-                    "AC-02 evaluation failed for event %s",
-                    row["id"],
-                )
-
-        # CM-01: Reevaluate critical changes against their review status
-        # and the current configured deadline.
-        for row in change_rows:
-            try:
-                payload = json.loads(row["payload"])
-
-                if payload.get("critical") is True:
-                    event = EventIn(
-                        event_type="cloud_change",
-                        employee_id=row["employee_id"] or "UNKNOWN",
-                        system_name=row["system_name"],
-                        event_time=parse_dt(row["event_time"]),
-                        change_id=payload.get("change_id"),
-                        change_description=payload.get(
-                            "change_description"
-                        ),
-                        critical=True,
-                        review_status=payload.get("review_status"),
-                        details=payload,
-                    )
-
-                    evaluate_cloud_change(event, row["id"])
-
-            except Exception:
-                logger.exception(
-                    "CM-01 evaluation failed for event %s",
-                    row["id"],
-                )
-
-        logger.info("Continuous compliance evaluation completed.")
-
-    except Exception:
-        logger.exception("Continuous compliance monitoring failed.")
-
-
-# ============================================================
-# SCHEDULER LIFECYCLE
-# ============================================================
-
-scheduler = BackgroundScheduler(timezone="UTC")
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    init_db()
-
-    scheduler.add_job(
-        run_compliance_monitor,
-        trigger="interval",
-        seconds=MONITOR_INTERVAL_SECONDS,
-        id="continuous_compliance_monitor",
-        replace_existing=True,
-        max_instances=1,
-        coalesce=True,
-    )
-
-    if not scheduler.running:
-        scheduler.start()
-
-    logger.info(
-        "Continuous compliance monitor started; interval=%s seconds.",
-        MONITOR_INTERVAL_SECONDS,
-    )
-
-    try:
-        yield
-    finally:
-        if scheduler.running:
-            scheduler.shutdown(wait=False)
-
-
-app.router.lifespan_context = lifespan
 
 
 # ============================================================
@@ -1110,3 +960,79 @@ def get_audit_log(limit: int = 200):
         output.append(item)
 
     return output
+
+
+# ============================================================
+# MONITORING RUN HISTORY
+# ============================================================
+
+@app.get("/monitoring/runs")
+def get_monitoring_runs(limit: int = 20):
+    """Return recent monitoring executions, newest first."""
+
+    if limit < 1 or limit > 100:
+        raise HTTPException(
+            status_code=400,
+            detail="limit must be between 1 and 100",
+        )
+
+    with connect() as con:
+        rows = con.execute(
+            """
+            SELECT *
+            FROM monitoring_runs
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+
+    result = []
+    for row in rows:
+        item = dict(row)
+        try:
+            item["errors"] = json.loads(item["errors"])
+            item["summary"] = json.loads(item["summary"])
+        except (TypeError, json.JSONDecodeError):
+            item["errors"] = []
+            item["summary"] = {}
+        result.append(item)
+
+    return {"count": len(result), "runs": result}
+
+
+@app.get("/monitoring/status")
+def get_monitoring_status():
+    """Return the latest run and background scheduler state."""
+
+    with connect() as con:
+        row = con.execute(
+            """
+            SELECT *
+            FROM monitoring_runs
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+
+    try:
+        from backend.scheduler import scheduler
+        scheduler_running = scheduler.running
+    except Exception:
+        scheduler_running = False
+
+    latest_run = None
+    if row is not None:
+        latest_run = dict(row)
+        try:
+            latest_run["errors"] = json.loads(latest_run["errors"])
+            latest_run["summary"] = json.loads(latest_run["summary"])
+        except (TypeError, json.JSONDecodeError):
+            latest_run["errors"] = []
+            latest_run["summary"] = {}
+
+    return {
+        "scheduler_running": scheduler_running,
+        "latest_run": latest_run,
+        "has_run": latest_run is not None,
+    }

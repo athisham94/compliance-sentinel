@@ -179,49 +179,179 @@ def status_color(status):
     return colors.get(status, "#64748b")
 
 
+
+# ============================================================
+# UI LAYOUT AND STYLING
+# ============================================================
+
+st.markdown(
+    """
+    <style>
+    .block-container {
+        max-width: 1500px;
+        padding-top: 1.5rem;
+        padding-bottom: 2.5rem;
+    }
+
+    section[data-testid="stSidebar"] {
+        border-right: 1px solid rgba(128, 128, 128, 0.22);
+    }
+
+    section[data-testid="stSidebar"] .block-container {
+        padding-top: 1.2rem;
+    }
+
+    h1 {
+        font-size: 2.15rem !important;
+        font-weight: 750 !important;
+        letter-spacing: -0.04em;
+    }
+
+    h2, h3 {
+        letter-spacing: -0.025em;
+    }
+
+    [data-testid="stMetric"] {
+        padding: 16px;
+        border: 1px solid rgba(128, 128, 128, 0.22);
+        border-radius: 12px;
+        background: var(--secondary-background-color);
+    }
+
+    [data-testid="stMetricLabel"] {
+        font-weight: 600;
+    }
+
+    [data-testid="stDataFrame"] {
+        border: 1px solid rgba(128, 128, 128, 0.18);
+        border-radius: 10px;
+        overflow: hidden;
+    }
+
+    [data-testid="stExpander"] {
+        border-radius: 10px;
+        border-color: rgba(128, 128, 128, 0.25);
+    }
+
+    .stButton > button,
+    .stFormSubmitButton > button {
+        border-radius: 9px;
+        font-weight: 600;
+        min-height: 40px;
+    }
+
+    div[data-testid="stAlert"] {
+        border-radius: 10px;
+    }
+
+    hr {
+        margin-top: 1.25rem;
+        margin-bottom: 1.25rem;
+        opacity: 0.35;
+    }
+
+    @media (max-width: 768px) {
+        .block-container {
+            padding-left: 1rem;
+            padding-right: 1rem;
+        }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 # ============================================================
 # SIDEBAR
 # ============================================================
 
 with st.sidebar:
-    st.title("🛡️ Compliance Sentinel")
-
-    st.caption("Continuous Compliance Drift Detection")
-
-    st.divider()
-
-    st.markdown("### System")
-
-    st.code(API_BASE, language=None)
-
-    health, health_error = api_get("/health")
-
-    if health_error:
-        st.error("API disconnected")
-        st.caption(health_error)
-    else:
-        st.success("API connected")
-
-    st.divider()
-
-    page = st.radio(
-        "Navigation",
-        [
-            "Overview",
-            "Findings",
-            "Controls",
-            "Events",
-            "Audit Trail",
-        ],
-        index=0,
+    st.markdown(
+        """
+        <div style="padding: 0.4rem 0 0.7rem 0;">
+            <div style="font-size: 2rem;">🛡️</div>
+            <div style="font-size: 1.35rem; font-weight: 800;
+                        letter-spacing: -0.04em;">
+                Compliance Sentinel
+            </div>
+            <div style="font-size: 0.82rem; opacity: 0.7;
+                        line-height: 1.5; margin-top: 0.35rem;">
+                Continuous Compliance<br>Drift Detection
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
     st.divider()
 
-    if st.button("Refresh dashboard", use_container_width=True):
+    health, health_error = api_get("/health")
+
+    st.caption("SYSTEM STATUS")
+
+    if health_error:
+        st.error("API disconnected")
+        with st.expander("Connection details"):
+            st.code(API_BASE, language=None)
+            st.caption(health_error)
+    else:
+        st.success("API connected")
+        with st.expander("Backend details"):
+            st.code(API_BASE, language=None)
+
+    st.divider()
+
+
+    st.markdown(
+        """
+        <style>
+        /* Compliance Sentinel sidebar navigation */
+        section[data-testid="stSidebar"] div[role="radiogroup"] {
+            gap: 0.3rem;
+        }
+
+        section[data-testid="stSidebar"] div[role="radiogroup"] label {
+            padding: 0.45rem 0.65rem;
+            border-radius: 7px;
+            min-height: 2.5rem;
+            align-items: center;
+        }
+
+        section[data-testid="stSidebar"] div[role="radiogroup"] label p {
+            font-size: 0.95rem;
+            font-weight: 500;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.caption("WORKSPACE")
+
+    page_labels = {
+        "Overview": "Overview",
+        "Findings": "Findings & Alerts",
+        "Controls": "Compliance Controls",
+        "Events": "Security Events",
+        "Audit Trail": "Audit Trail",
+        "Monitoring": "Live Monitoring",
+    }
+
+    page = st.radio(
+        "Workspace navigation",
+        options=list(page_labels.keys()),
+        format_func=lambda item: page_labels[item],
+        index=0,
+        label_visibility="collapsed",
+        key="main_navigation",
+    )
+
+    st.divider()
+
+    if st.button("↻  Refresh dashboard", use_container_width=True):
         st.rerun()
 
-    st.caption("Compliance Sentinel · Version 1.0.0")
+    st.caption("COMPLIANCE SENTINEL · v1.0.0")
 
 
 # ============================================================
@@ -300,6 +430,92 @@ if page == "Overview":
     col3.metric("Critical", len(critical_findings))
     col4.metric("High", len(high_findings))
     col5.metric("Resolved", len(resolved_findings))
+
+    # ========================================================
+    # OVERVIEW MONITORING HEALTH
+    # ========================================================
+
+    st.markdown("### Continuous Monitoring")
+
+    monitoring_status, monitoring_error = api_get("/monitoring/status")
+
+    if monitoring_error:
+        st.warning(
+            f"Monitoring status unavailable: {monitoring_error}"
+        )
+    else:
+        latest_run = monitoring_status.get("latest_run")
+        scheduler_running = monitoring_status.get(
+            "scheduler_running", False
+        )
+
+        health_cols = st.columns(4)
+
+        health_cols[0].metric(
+            "Scheduler",
+            "Running" if scheduler_running else "Stopped",
+        )
+
+        if latest_run:
+            health_cols[1].metric(
+                "Latest Run",
+                latest_run.get("status", "UNKNOWN"),
+                delta=f"Run #{latest_run.get('id', '?')}",
+            )
+
+            health_cols[2].metric(
+                "Evaluations",
+                sum(
+                    int(latest_run.get(key, 0) or 0)
+                    for key in (
+                        "ac01_evaluated",
+                        "ac02_evaluated",
+                        "cm01_evaluated",
+                    )
+                ),
+            )
+
+            health_cols[3].metric(
+                "Monitoring Errors",
+                latest_run.get("error_count", 0),
+            )
+
+            timestamp_col, controls_col = st.columns([1, 2])
+
+            with timestamp_col:
+                st.caption("Latest run started")
+                st.write(
+                    format_timestamp(latest_run.get("started_at"))
+                )
+
+            with controls_col:
+                st.caption("Control evaluation counts")
+
+                count_cols = st.columns(3)
+                count_cols[0].metric(
+                    "AC-01",
+                    latest_run.get("ac01_evaluated", 0),
+                )
+                count_cols[1].metric(
+                    "AC-02",
+                    latest_run.get("ac02_evaluated", 0),
+                )
+                count_cols[2].metric(
+                    "CM-01",
+                    latest_run.get("cm01_evaluated", 0),
+                )
+
+            errors = latest_run.get("errors", [])
+
+            if errors:
+                with st.expander("View monitoring errors"):
+                    for error in errors:
+                        st.write(f"- {error}")
+
+        else:
+            st.info("The scheduler has not recorded a monitoring run yet.")
+
+    st.divider()
 
     st.divider()
 
@@ -809,7 +1025,8 @@ elif page == "Controls":
             expanded=True,
         ):
 
-            st.json(control)
+            with st.expander("View raw control configuration"):
+                st.json(control)
 
             enabled_value = first_value(
                 control,
@@ -1073,6 +1290,197 @@ elif page == "Audit Trail":
 
     with st.expander("Inspect raw audit records"):
         st.json(audit_entries)
+
+# ============================================================
+# MONITORING PAGE
+# ============================================================
+
+elif page == "Monitoring":
+
+    st.subheader("Continuous Monitoring")
+
+    st.markdown(
+        """
+        Track the background compliance scheduler, inspect the latest
+        evaluation results, and review the history of monitoring runs.
+        """
+    )
+
+    if st.button("Refresh monitoring data", type="primary"):
+        st.rerun()
+
+    status_data, status_error = api_get("/monitoring/status")
+    history_data, history_error = api_get("/monitoring/runs?limit=50")
+
+    if status_error:
+        st.error(f"Could not retrieve monitoring status: {status_error}")
+
+    if history_error:
+        st.error(f"Could not retrieve monitoring history: {history_error}")
+
+    if status_data is not None:
+
+        scheduler_running = status_data.get("scheduler_running", False)
+        latest_run = status_data.get("latest_run")
+
+        st.markdown("### Scheduler Status")
+
+        status_col, run_col, error_col = st.columns(3)
+
+        status_col.metric(
+            "Background Scheduler",
+            "RUNNING" if scheduler_running else "STOPPED",
+        )
+
+        if latest_run:
+            run_col.metric(
+                "Latest Run",
+                latest_run.get("status", "UNKNOWN"),
+                delta=f"Run #{latest_run.get('id', '?')}",
+            )
+
+            error_col.metric(
+                "Latest Run Errors",
+                latest_run.get("error_count", 0),
+            )
+        else:
+            run_col.metric("Latest Run", "Not yet run")
+            error_col.metric("Latest Run Errors", "N/A")
+
+        if scheduler_running:
+            st.success("Automatic compliance monitoring is active.")
+        else:
+            st.warning(
+                "The monitoring scheduler is stopped. "
+                "Check the backend startup logs."
+            )
+
+        st.divider()
+
+        st.markdown("### Latest Evaluation")
+
+        if latest_run:
+
+            run_col1, run_col2, run_col3 = st.columns(3)
+
+            run_col1.metric(
+                "AC-01 Evaluations",
+                latest_run.get("ac01_evaluated", 0),
+            )
+
+            run_col2.metric(
+                "AC-02 Evaluations",
+                latest_run.get("ac02_evaluated", 0),
+            )
+
+            run_col3.metric(
+                "CM-01 Evaluations",
+                latest_run.get("cm01_evaluated", 0),
+            )
+
+            detail_col1, detail_col2 = st.columns(2)
+
+            with detail_col1:
+                st.markdown("**Started at**")
+                st.write(
+                    format_timestamp(latest_run.get("started_at"))
+                )
+
+            with detail_col2:
+                st.markdown("**Completed at**")
+                st.write(
+                    format_timestamp(latest_run.get("completed_at"))
+                )
+
+            errors = latest_run.get("errors", [])
+
+            if errors:
+                st.error("Errors reported by the latest monitoring run.")
+                for error in errors:
+                    st.write(f"- {error}")
+            elif latest_run.get("status") == "SUCCESS":
+                st.success("The latest monitoring run completed successfully.")
+            elif latest_run.get("status") == "PARTIAL":
+                st.warning(
+                    "The latest monitoring run completed with partial results."
+                )
+            elif latest_run.get("status") == "FAILED":
+                st.error("The latest monitoring run failed.")
+
+            with st.expander("View latest run details"):
+                st.json(latest_run)
+
+        else:
+            st.info("No monitoring run has been recorded yet.")
+
+    st.divider()
+
+    st.markdown("### Monitoring Run History")
+
+    if history_data is not None:
+
+        runs = history_data.get("runs", [])
+
+        st.caption(
+            f"Showing {len(runs)} of "
+            f"{history_data.get('count', len(runs))} available runs."
+        )
+
+        if runs:
+
+            history_rows = []
+
+            for run in runs:
+                history_rows.append(
+                    {
+                        "Run ID": run.get("id"),
+                        "Status": run.get("status", "UNKNOWN"),
+                        "Started": format_timestamp(
+                            run.get("started_at")
+                        ),
+                        "Completed": format_timestamp(
+                            run.get("completed_at")
+                        ),
+                        "AC-01": run.get("ac01_evaluated", 0),
+                        "AC-02": run.get("ac02_evaluated", 0),
+                        "CM-01": run.get("cm01_evaluated", 0),
+                        "Errors": run.get("error_count", 0),
+                    }
+                )
+
+            st.dataframe(
+                pd.DataFrame(history_rows),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            run_ids = [
+                run.get("id")
+                for run in runs
+                if run.get("id") is not None
+            ]
+
+            if run_ids:
+                selected_run_id = st.selectbox(
+                    "Inspect a monitoring run",
+                    options=run_ids,
+                    format_func=lambda run_id: f"Run #{run_id}",
+                )
+
+                selected_run = next(
+                    (
+                        run for run in runs
+                        if run.get("id") == selected_run_id
+                    ),
+                    None,
+                )
+
+                if selected_run:
+                    with st.expander("Selected run details"):
+                        st.json(selected_run)
+
+        else:
+            st.info("No monitoring runs are available yet.")
 
 
 # ============================================================
